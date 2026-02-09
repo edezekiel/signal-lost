@@ -207,11 +207,12 @@ test.describe('Squad Movement', () => {
   test('squad moves one grid step per tick', async ({ page }) => {
     await page.goto('/signal-lost.html');
     await startMission(page);
-    const startCol = await page.evaluate(() => window.__game.state.squads.ALPHA.col);
     await sendCommand(page, 'ALPHA MOVE H1');
+    // sendCommand triggers one tick (via advanceTime), so ALPHA has already moved one step
+    const colAfterCommand = await page.evaluate(() => window.__game.state.squads.ALPHA.col);
     await advanceTicks(page, 1);
     const newCol = await page.evaluate(() => window.__game.state.squads.ALPHA.col);
-    expect(newCol).toBe(startCol + 1);
+    expect(newCol).toBe(colAfterCommand + 1);
   });
 
   test('HOLD command stops movement', async ({ page }) => {
@@ -693,15 +694,18 @@ test.describe('Combat System', () => {
   test('ENGAGE with revealed enemy starts combat', async ({ page }) => {
     await page.goto('/signal-lost.html');
     await startMission(page);
+    // Place ALPHA near enemy but far from VIPER (to avoid VIPER discovery flooding the log)
     await page.evaluate(() => {
       window.__game.state.enemies[0].revealed = true;
-      window.__game.state.squads.ALPHA.col = 4;
-      window.__game.state.squads.ALPHA.row = 3;
+      window.__game.state.enemies[0].col = 1;
+      window.__game.state.enemies[0].row = 0;
+      window.__game.state.squads.ALPHA.col = 1;
+      window.__game.state.squads.ALPHA.row = 1;
     });
     await sendCommand(page, 'ALPHA ENGAGE');
     const status = await page.evaluate(() => window.__game.state.squads.ALPHA.status);
     expect(status).toBe('engaged');
-    const msgs = await getLastMessages(page, 2);
+    const msgs = await getLastMessages(page, 4);
     expect(msgs.some(m => m.includes('Engaging enemy'))).toBe(true);
   });
 
