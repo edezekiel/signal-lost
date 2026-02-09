@@ -1,0 +1,19 @@
+{
+  "name": "signal-lost",
+  "version": "1.0.0",
+  "description": "Signal Lost — a text-based military command game",
+  "scripts": {
+    "start": "npx serve . -l 4173 --no-clipboard & sleep 2 && open http://localhost:4173/signal-lost.html",
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:headed": "playwright test --headed"
+  },
+  "devDependencies": {
+    "jsdom": "^24.0.0",
+    "serve": "^14.2.0",
+    "vitest": "^2.0.0"
+  },
+  "dependencies": {
+    "@playwright/test": "^1.58.2"
+  }
+}

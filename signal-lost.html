@@ -1,0 +1,1466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SIGNAL LOST</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&display=swap');
+
+*{margin:0;padding:0;box-sizing:border-box}
+
+:root{
+  --glow:#d4d4d4;
+  --dim:#666;
+  --bg:#0a0a0a;
+  --panel:#111;
+  --border:#333;
+  --highlight:#fff;
+  --danger:#888;
+}
+
+html,body{
+  height:100%;
+  background:#000;
+  color:var(--glow);
+  font-family:'IBM Plex Mono',monospace;
+  font-size:13px;
+  overflow:hidden;
+}
+
+/* CRT Effect Container */
+#crt{
+  position:relative;
+  width:100%;
+  height:100%;
+  overflow:hidden;
+}
+
+/* Scanlines */
+#crt::before{
+  content:'';
+  position:absolute;
+  top:0;left:0;right:0;bottom:0;
+  background:repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0,0,0,0.15) 2px,
+    rgba(0,0,0,0.15) 4px
+  );
+  pointer-events:none;
+  z-index:100;
+}
+
+/* Vignette */
+#crt::after{
+  content:'';
+  position:absolute;
+  top:0;left:0;right:0;bottom:0;
+  background:radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,0.6) 100%);
+  pointer-events:none;
+  z-index:101;
+}
+
+/* Screen flicker */
+@keyframes flicker{
+  0%{opacity:1}
+  3%{opacity:0.97}
+  6%{opacity:1}
+  50%{opacity:1}
+  53%{opacity:0.98}
+  56%{opacity:1}
+}
+#crt{animation:flicker 4s infinite}
+
+/* Layout */
+#game{
+  display:grid;
+  grid-template-rows:auto 1fr auto;
+  height:100%;
+  padding:8px;
+  gap:4px;
+}
+
+/* Header */
+#header{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  padding:6px 12px;
+  border:1px solid var(--border);
+  background:var(--panel);
+}
+#header h1{font-size:14px;letter-spacing:4px;font-weight:700;text-transform:uppercase}
+#header .time{font-size:13px;color:var(--dim)}
+
+/* Main area */
+#main{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:4px;
+  overflow:hidden;
+  min-height:0;
+}
+
+/* Panels */
+.panel{
+  border:1px solid var(--border);
+  background:var(--panel);
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+  min-height:0;
+}
+.panel-title{
+  padding:4px 10px;
+  border-bottom:1px solid var(--border);
+  font-size:11px;
+  letter-spacing:2px;
+  font-weight:700;
+  text-transform:uppercase;
+  color:var(--dim);
+  flex-shrink:0;
+}
+
+/* Map */
+#map-container{
+  flex:1;
+  overflow:hidden;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:8px;
+}
+#map{
+  font-size:14px;
+  line-height:1.6;
+  letter-spacing:2px;
+  white-space:pre;
+  cursor:crosshair;
+}
+.map-enemy{color:var(--glow);font-weight:bold}
+.map-friendly{color:var(--highlight);font-weight:bold}
+.map-poi{color:var(--dim)}
+
+/* Right column */
+#right-col{
+  display:grid;
+  grid-template-rows:1fr auto;
+  gap:4px;
+  min-height:0;
+}
+
+/* Radio Log */
+#radio-log-container{
+  flex:1;
+  overflow-y:auto;
+  padding:8px 10px;
+  scroll-behavior:smooth;
+}
+#radio-log-container::-webkit-scrollbar{width:4px}
+#radio-log-container::-webkit-scrollbar-track{background:var(--bg)}
+#radio-log-container::-webkit-scrollbar-thumb{background:var(--border)}
+
+.radio-msg{
+  margin-bottom:6px;
+  line-height:1.5;
+  animation:fadeIn 0.3s ease;
+}
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+
+.radio-msg .timestamp{color:var(--dim);font-size:11px}
+.radio-msg .callsign{font-weight:700;color:var(--highlight)}
+.radio-msg .callsign.command{color:var(--glow)}
+.radio-msg .callsign.system{color:var(--dim)}
+.radio-msg.garbled .body{
+  color:var(--dim);
+  font-style:italic;
+}
+.radio-msg.urgent{
+  border-left:2px solid var(--highlight);
+  padding-left:8px;
+}
+.radio-msg.event{
+  border-left:2px solid var(--dim);
+  padding-left:8px;
+  color:var(--dim);
+}
+
+/* Squad Status */
+#squad-status{
+  padding:8px 10px;
+}
+.squad-row{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  margin-bottom:4px;
+  font-size:12px;
+}
+.squad-row .name{width:60px;font-weight:700;flex-shrink:0}
+.stat{display:flex;gap:2px;align-items:center}
+.stat-label{font-size:10px;color:var(--dim);width:24px}
+.stat-bar{display:flex;gap:1px}
+.stat-pip{
+  width:8px;height:8px;
+  border:1px solid var(--border);
+  background:transparent;
+}
+.stat-pip.filled{background:var(--glow);border-color:var(--glow)}
+.stat-pip.critical{background:var(--glow);border-color:var(--glow);animation:blink 1s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0.3}}
+
+.squad-extra{font-size:10px;color:var(--dim);margin-left:auto}
+
+/* Command Input */
+#input-area{
+  display:flex;
+  border:1px solid var(--border);
+  background:var(--panel);
+  align-items:center;
+}
+#input-area label{
+  padding:6px 10px;
+  font-weight:700;
+  color:var(--dim);
+  font-size:12px;
+  flex-shrink:0;
+}
+#cmd{
+  flex:1;
+  background:transparent;
+  border:none;
+  color:var(--highlight);
+  font-family:inherit;
+  font-size:13px;
+  padding:8px 4px;
+  outline:none;
+  caret-color:var(--highlight);
+}
+#cmd::placeholder{color:#333}
+
+/* Briefing Overlay */
+#briefing-overlay{
+  position:fixed;
+  top:0;left:0;right:0;bottom:0;
+  background:rgba(0,0,0,0.95);
+  z-index:200;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+#briefing-overlay.hidden{display:none}
+#briefing{
+  max-width:640px;
+  padding:40px;
+  border:1px solid var(--border);
+  background:var(--panel);
+}
+#briefing h2{
+  font-size:16px;
+  letter-spacing:4px;
+  margin-bottom:20px;
+  text-transform:uppercase;
+}
+#briefing p{
+  line-height:1.8;
+  margin-bottom:12px;
+  color:var(--glow);
+}
+#briefing .objectives{
+  border:1px solid var(--border);
+  padding:12px;
+  margin:16px 0;
+}
+#briefing .objectives h3{
+  font-size:11px;
+  letter-spacing:2px;
+  color:var(--dim);
+  margin-bottom:8px;
+  text-transform:uppercase;
+}
+#briefing .objectives li{
+  list-style:none;
+  padding:2px 0;
+  line-height:1.6;
+}
+#briefing .objectives li::before{content:'▸ '}
+#briefing button{
+  background:transparent;
+  border:1px solid var(--glow);
+  color:var(--glow);
+  padding:8px 24px;
+  font-family:inherit;
+  font-size:12px;
+  letter-spacing:2px;
+  text-transform:uppercase;
+  cursor:pointer;
+  margin-top:16px;
+}
+#briefing button:hover{background:var(--glow);color:var(--bg)}
+
+/* Game Over Overlay */
+#gameover-overlay{
+  position:fixed;
+  top:0;left:0;right:0;bottom:0;
+  background:rgba(0,0,0,0.95);
+  z-index:200;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+#gameover-overlay.hidden{display:none}
+#gameover{
+  max-width:500px;
+  padding:40px;
+  border:1px solid var(--border);
+  background:var(--panel);
+  text-align:center;
+}
+#gameover h2{font-size:18px;letter-spacing:6px;margin-bottom:20px;text-transform:uppercase}
+#gameover p{line-height:1.8;margin-bottom:8px;color:var(--glow)}
+#gameover button{
+  background:transparent;
+  border:1px solid var(--glow);
+  color:var(--glow);
+  padding:8px 24px;
+  font-family:inherit;
+  font-size:12px;
+  letter-spacing:2px;
+  text-transform:uppercase;
+  cursor:pointer;
+  margin-top:20px;
+}
+#gameover button:hover{background:var(--glow);color:var(--bg)}
+
+/* Choice overlay */
+#choice-overlay{
+  position:fixed;
+  bottom:60px;
+  left:50%;
+  transform:translateX(-50%);
+  z-index:150;
+  background:var(--panel);
+  border:1px solid var(--border);
+  padding:12px 16px;
+  max-width:600px;
+  width:90%;
+}
+#choice-overlay.hidden{display:none}
+#choice-prompt{margin-bottom:10px;font-size:12px;color:var(--glow)}
+#choice-options{display:flex;gap:8px;flex-wrap:wrap}
+#choice-options button{
+  background:transparent;
+  border:1px solid var(--border);
+  color:var(--glow);
+  padding:6px 16px;
+  font-family:inherit;
+  font-size:11px;
+  letter-spacing:1px;
+  cursor:pointer;
+  text-transform:uppercase;
+}
+#choice-options button:hover{background:var(--glow);color:var(--bg)}
+</style>
+</head>
+<body>
+<div id="crt">
+<div id="game">
+  <div id="header">
+    <h1>Signal Lost</h1>
+    <div><span id="op-name">Operation Bright Light</span> &nbsp;│&nbsp; <span class="time" id="clock">06:00</span> &nbsp;│&nbsp; <span id="tts-toggle" style="cursor:pointer;color:var(--dim);font-size:12px;letter-spacing:1px" onclick="toggleTTS()" title="Toggle voice">VOICE: ON</span></div>
+  </div>
+
+  <div id="main">
+    <div class="panel" id="map-panel">
+      <div class="panel-title">Tactical Map</div>
+      <div id="map-container"><pre id="map"></pre></div>
+    </div>
+    <div id="right-col">
+      <div class="panel" id="radio-panel">
+        <div class="panel-title">Radio Log</div>
+        <div id="radio-log-container"></div>
+      </div>
+      <div class="panel" id="status-panel">
+        <div class="panel-title">Squad Status</div>
+        <div id="squad-status"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="input-area">
+    <label>▸ COMMAND:</label>
+    <input type="text" id="cmd" placeholder="Type command... (HELP for commands)" autocomplete="off" spellcheck="false" disabled>
+  </div>
+</div>
+</div>
+
+<div id="briefing-overlay">
+  <div id="briefing">
+    <h2>Operation Bright Light</h2>
+    <p>Commander, we've lost contact with a recon patrol — callsign VIPER — last reported near grid sector E5. Local intel suggests enemy activity in the area has intensified over the past 48 hours.</p>
+    <p>You have two infantry squads at your disposal. Locate the missing patrol and extract any survivors. A medevac helicopter — callsign DUSTOFF — is on standby at base.</p>
+    <div class="objectives">
+      <h3>Mission Objectives</h3>
+      <ul>
+        <li>Locate missing recon patrol (VIPER)</li>
+        <li>Extract at least 2 survivors via DUSTOFF</li>
+        <li>Minimize casualties</li>
+      </ul>
+    </div>
+    <p style="color:var(--dim);font-size:11px">Available assets: ALPHA squad (grid B2), BRAVO squad (grid B6), DUSTOFF medevac (base). Fire support available. Time limit: 20 minutes.</p>
+    <div style="color:var(--dim);font-size:11px;margin-top:8px;border-top:1px solid var(--dim);padding-top:8px">
+      <strong style="color:var(--highlight)">Quick start:</strong> Move squads with <code>ALPHA MOVE E5</code>. Use <code>AMBUSH</code> before entering hostile areas. Check the village at C3 for intel. Type <code>HELP</code> anytime.
+    </div>
+    <button onclick="startGame()">Begin Mission</button>
+  </div>
+</div>
+
+<div id="gameover-overlay" class="hidden">
+  <div id="gameover">
+    <h2 id="gameover-title">MISSION COMPLETE</h2>
+    <p id="gameover-text"></p>
+    <p id="gameover-stats"></p>
+    <button onclick="location.reload()">New Mission</button>
+  </div>
+</div>
+
+<div id="choice-overlay" class="hidden">
+  <div id="choice-prompt"></div>
+  <div id="choice-options"></div>
+</div>
+
+<script>
+// ─── TEXT-TO-SPEECH (RADIO VOICES) ────────────────────
+const tts = {
+  enabled: true,
+  synth: window.speechSynthesis || null,
+  queue: [],
+  speaking: false,
+  voices: null,
+
+  // Voice profiles per callsign — pitch/rate tuned for character
+  profiles: {
+    ALPHA:     { pitch: 0.9,  rate: 1.05, volume: 0.9 },
+    BRAVO:     { pitch: 1.15, rate: 1.15, volume: 0.85 },
+    DUSTOFF:   { pitch: 0.8,  rate: 0.95, volume: 0.9 },
+    COMMAND:   { pitch: 1.0,  rate: 0.95, volume: 1.0 },
+    HQ:        { pitch: 0.75, rate: 0.9,  volume: 0.85 },
+    ARTILLERY: { pitch: 0.7,  rate: 1.0,  volume: 0.9 },
+    FALCON:    { pitch: 0.85, rate: 1.1,  volume: 0.9 },
+    SYSTEM:    { pitch: 0.6,  rate: 1.1,  volume: 0.7 },
+    _default:  { pitch: 1.0,  rate: 1.0,  volume: 0.8 },
+  },
+
+  init() {
+    if (!this.synth) return;
+    // Load voices (some browsers load async)
+    this.voices = this.synth.getVoices();
+    if (!this.voices.length) {
+      this.synth.addEventListener('voiceschanged', () => {
+        this.voices = this.synth.getVoices();
+      });
+    }
+  },
+
+  getVoice() {
+    if (!this.voices || !this.voices.length) this.voices = this.synth.getVoices();
+    // Prefer an English voice
+    return this.voices.find(v => v.lang.startsWith('en') && v.localService) ||
+           this.voices.find(v => v.lang.startsWith('en')) ||
+           this.voices[0] || null;
+  },
+
+  speak(callsign, text) {
+    if (!this.enabled || !this.synth) return;
+    // Clean text of special chars
+    const clean = text.replace(/[═▸✦●▲▼✈█~^│]/g, '').replace(/\s+/g, ' ').trim();
+    if (!clean) return;
+
+    const profile = this.profiles[callsign] || this.profiles._default;
+    const utter = new SpeechSynthesisUtterance(clean);
+
+    const voice = this.getVoice();
+    if (voice) utter.voice = voice;
+
+    utter.pitch = profile.pitch;
+    utter.rate = profile.rate;
+    utter.volume = profile.volume;
+
+    // Queue management — don't let messages pile up
+    utter.onend = () => {
+      this.speaking = false;
+      this.processQueue();
+    };
+    utter.onerror = () => {
+      this.speaking = false;
+      this.processQueue();
+    };
+
+    this.queue.push(utter);
+    if (!this.speaking) this.processQueue();
+  },
+
+  processQueue() {
+    if (this.queue.length === 0) return;
+    // Skip to latest if queue is backed up (keep max 3)
+    while (this.queue.length > 3) this.queue.shift();
+    const utter = this.queue.shift();
+    this.speaking = true;
+    this.synth.speak(utter);
+  },
+
+  stop() {
+    if (this.synth) this.synth.cancel();
+    this.queue = [];
+    this.speaking = false;
+  },
+
+  toggle() {
+    this.enabled = !this.enabled;
+    if (!this.enabled) this.stop();
+    return this.enabled;
+  }
+};
+
+tts.init();
+
+// ─── GAME STATE ───────────────────────────────────────
+const MAP_COLS = 8;
+const MAP_ROWS = 8;
+const COL_LABELS = 'ABCDEFGH';
+
+const state = {
+  running: false,
+  gameTime: 360, // 06:00 in minutes
+  realTick: 0,
+  tickSpeed: 1500, // ms per game minute
+  eventQueue: [],
+  eventsFired: new Set(),
+  squads: {},
+  enemies: [],
+  pois: [],
+  viperFound: false,
+  viperGrid: null,
+  viperSurvivors: 0,
+  dustoffLaunched: false,
+  dustoffGrid: null,
+  dustoffArrivalTime: null,
+  extractionDone: false,
+  fireSupportsLeft: 2,
+  airStrikesLeft: 1,
+  choiceActive: false,
+  missionEnd: false,
+  totalCasualties: 0,
+};
+
+function initSquads() {
+  state.squads = {
+    ALPHA: {
+      name: 'ALPHA',
+      leader: 'Lt. Vasquez',
+      personality: 'calm',
+      col: 1, row: 1, // B2
+      targetCol: null, targetRow: null,
+      moving: false,
+      morale: 5, ammo: 5, stamina: 5, strength: 12,
+      status: 'idle', // idle, moving, engaged, pinned, ambush
+      holdingFire: false,
+    },
+    BRAVO: {
+      name: 'BRAVO',
+      leader: 'Sgt. Kovacs',
+      personality: 'nervous',
+      col: 1, row: 5, // B6
+      targetCol: null, targetRow: null,
+      moving: false,
+      morale: 5, ammo: 5, stamina: 5, strength: 10,
+      status: 'idle',
+      holdingFire: false,
+    },
+    DUSTOFF: {
+      name: 'DUSTOFF',
+      leader: 'CW2 Martinez',
+      personality: 'professional',
+      col: -1, row: -1,
+      status: 'standby', // standby, inbound, onsite, extracting, rtb
+      capacity: 6,
+    }
+  };
+}
+
+function initMap() {
+  // Enemies (hidden initially)
+  state.enemies = [
+    { id: 'e1', col: 5, row: 3, strength: 8, revealed: false, alive: true },
+    { id: 'e2', col: 6, row: 5, strength: 6, revealed: false, alive: true },
+  ];
+  // VIPER location
+  state.viperGrid = { col: 4, row: 4 }; // E5
+  state.viperSurvivors = 3;
+  // POIs
+  state.pois = [
+    { col: 3, row: 2, symbol: '?', label: 'village', revealed: false },
+    { col: 5, row: 4, symbol: '!', label: 'wreckage', revealed: false },
+  ];
+}
+
+// ─── RENDERING ────────────────────────────────────────
+function formatTime(mins) {
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+}
+
+function renderClock() {
+  document.getElementById('clock').textContent = formatTime(state.gameTime);
+}
+
+function renderMap() {
+  let lines = [];
+  // Header
+  let header = '   ';
+  for (let c = 0; c < MAP_COLS; c++) header += ' ' + COL_LABELS[c] + ' ';
+  lines.push(header);
+  lines.push('   ' + '───'.repeat(MAP_COLS));
+
+  for (let r = 0; r < MAP_ROWS; r++) {
+    let row = ` ${r+1} │`;
+    for (let c = 0; c < MAP_COLS; c++) {
+      let ch = ' · ';
+      // Terrain features
+      if ((r === 2 && c >= 3 && c <= 5) || (r === 3 && c >= 4 && c <= 6)) ch = ' ~ '; // jungle
+      if (r === 0 && c >= 5) ch = ' ^ '; // hills
+
+      // POIs
+      for (const poi of state.pois) {
+        if (poi.col === c && poi.row === r && poi.revealed) ch = ` ${poi.symbol} `;
+      }
+
+      // VIPER
+      if (state.viperFound && state.viperGrid.col === c && state.viperGrid.row === r) {
+        ch = ' ✦ ';
+      }
+
+      // Enemies
+      for (const e of state.enemies) {
+        if (e.col === c && e.row === r && e.revealed && e.alive) ch = ' ● ';
+      }
+
+      // Dustoff
+      if (state.squads.DUSTOFF.col === c && state.squads.DUSTOFF.row === r &&
+          ['inbound','onsite','extracting'].includes(state.squads.DUSTOFF.status)) {
+        ch = ' ✈ ';
+      }
+
+      // Friendly squads
+      for (const key of ['ALPHA','BRAVO']) {
+        const s = state.squads[key];
+        if (s.col === c && s.row === r && s.strength > 0) {
+          ch = key === 'ALPHA' ? ' ▲ ' : ' ▼ ';
+        }
+      }
+
+      row += ch;
+    }
+    lines.push(row);
+  }
+
+  lines.push('');
+  lines.push('  ▲ ALPHA  ▼ BRAVO  ● ENEMY  ✦ VIPER  ~ JUNGLE  ✈ DUSTOFF');
+
+  document.getElementById('map').textContent = lines.join('\n');
+}
+
+function renderStatus() {
+  const container = document.getElementById('squad-status');
+  let html = '';
+  for (const key of ['ALPHA','BRAVO','DUSTOFF']) {
+    const s = state.squads[key];
+    if (key === 'DUSTOFF') {
+      html += `<div class="squad-row"><span class="name">DUSTOFF</span><span class="squad-extra">${s.status.toUpperCase()}</span></div>`;
+      continue;
+    }
+    html += `<div class="squad-row">`;
+    html += `<span class="name">${key}</span>`;
+    html += renderStat('MOR', s.morale, 5);
+    html += renderStat('AMO', s.ammo, 5);
+    html += renderStat('STA', s.stamina, 5);
+    html += `<span class="squad-extra">${s.strength} soldiers │ ${s.status.toUpperCase()}</span>`;
+    html += `</div>`;
+  }
+  html += `<div class="squad-row" style="margin-top:4px"><span class="squad-extra">FIRE SUPPORT: ${state.fireSupportsLeft} │ AIR STRIKE: ${state.airStrikesLeft}</span></div>`;
+  container.innerHTML = html;
+}
+
+function renderStat(label, val, max) {
+  let html = `<span class="stat"><span class="stat-label">${label}</span><span class="stat-bar">`;
+  for (let i = 0; i < max; i++) {
+    const filled = i < val;
+    const critical = val <= 1 && filled;
+    html += `<span class="stat-pip${filled?' filled':''}${critical?' critical':''}"></span>`;
+  }
+  html += `</span></span>`;
+  return html;
+}
+
+function addRadio(callsign, text, type='normal') {
+  const container = document.getElementById('radio-log-container');
+  const div = document.createElement('div');
+  div.className = `radio-msg ${type}`;
+  const time = formatTime(state.gameTime);
+
+  let csClass = 'callsign';
+  if (callsign === 'COMMAND') csClass += ' command';
+  if (callsign === 'SYSTEM') csClass += ' system';
+
+  div.innerHTML = `<span class="timestamp">[${time}]</span> <span class="${csClass}">${callsign}:</span> <span class="body">${text}</span>`;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+
+  // Only speak character dialog, not system messages or player commands
+  // Character callsigns: ALPHA, BRAVO, DUSTOFF, ARTILLERY, FALCON, HQ
+  const characterCallsigns = ['ALPHA', 'BRAVO', 'DUSTOFF', 'ARTILLERY', 'FALCON', 'HQ'];
+  if (characterCallsigns.includes(callsign)) {
+    tts.speak(callsign, `${callsign}: ${text}`);
+  }
+}
+
+function addGarbled(callsign, text) {
+  // Garble some characters
+  let garbled = '';
+  for (let i = 0; i < text.length; i++) {
+    if (Math.random() < 0.25 && text[i] !== ' ') garbled += '█';
+    else garbled += text[i];
+  }
+  addRadio(callsign, garbled, 'garbled');
+}
+
+function gridLabel(col, row) {
+  return COL_LABELS[col] + (row + 1);
+}
+
+function parseGrid(str) {
+  str = str.toUpperCase().trim();
+  if (str.length < 2) return null;
+  const c = COL_LABELS.indexOf(str[0]);
+  const r = parseInt(str.slice(1)) - 1;
+  if (c < 0 || c >= MAP_COLS || isNaN(r) || r < 0 || r >= MAP_ROWS) return null;
+  return { col: c, row: r };
+}
+
+function dist(a, b) {
+  return Math.abs(a.col - b.col) + Math.abs(a.row - b.row);
+}
+
+// ─── COMMAND PARSER ───────────────────────────────────
+function processCommand(raw) {
+  const input = raw.trim().toUpperCase();
+  if (!input) return;
+
+  addRadio('COMMAND', raw.trim(), 'normal');
+
+  // Helper to advance time
+  function advanceTime() {
+    if (state.running && !state.missionEnd) {
+      tick();
+    }
+  }
+
+  if (state.choiceActive) {
+    addRadio('SYSTEM', 'Respond to the current situation first.', 'event');
+    advanceTime();
+    return;
+  }
+
+  const parts = input.split(/\s+/);
+
+  if (parts[0] === 'HELP') {
+    addRadio('SYSTEM', '── Movement ──  [UNIT] MOVE [GRID] · [UNIT] HOLD · [UNIT] RETREAT', 'event');
+    addRadio('SYSTEM', '── Combat ────  [UNIT] ENGAGE · [UNIT] AMBUSH', 'event');
+    addRadio('SYSTEM', '── Support ───  FIRE SUPPORT [GRID] · AIR STRIKE [GRID] · RESUPPLY [UNIT] · MEDEVAC', 'event');
+    addRadio('SYSTEM', '── Info ──────  [UNIT] SITREP · STATUS · MAP · HELP', 'event');
+    addRadio('SYSTEM', 'Units: ALPHA, BRAVO.  Grids: A1–H8.  Example: ALPHA MOVE E5', 'event');
+    advanceTime();
+    return;
+  }
+
+  if (parts[0] === 'STATUS') {
+    for (const key of ['ALPHA','BRAVO']) {
+      const s = state.squads[key];
+      addRadio('SYSTEM', `${key} (${s.leader}) — Grid ${gridLabel(s.col,s.row)} — Morale:${s.morale} Ammo:${s.ammo} Stamina:${s.stamina} Strength:${s.strength} — ${s.status}`, 'event');
+    }
+    addRadio('SYSTEM', `DUSTOFF — ${state.squads.DUSTOFF.status.toUpperCase()}`, 'event');
+    advanceTime();
+    return;
+  }
+
+  if (parts[0] === 'MAP') {
+    renderMap();
+    addRadio('SYSTEM', 'Map refreshed.', 'event');
+    advanceTime();
+    return;
+  }
+
+  // FIRE SUPPORT [GRID]
+  if (parts[0] === 'FIRE' && parts[1] === 'SUPPORT') {
+    const grid = parseGrid(parts[2] || '');
+    if (!grid) { addRadio('SYSTEM', 'Invalid grid. Usage: FIRE SUPPORT [GRID]', 'event'); advanceTime(); return; }
+    if (state.fireSupportsLeft <= 0) { addRadio('SYSTEM', 'No fire support missions remaining.', 'event'); advanceTime(); return; }
+    state.fireSupportsLeft--;
+    addRadio('ARTILLERY', `Fire mission received. Rounds out on ${gridLabel(grid.col,grid.row)}. Splash in 2 mikes.`, 'normal');
+    scheduleEvent(2, () => {
+      addRadio('ARTILLERY', `Splash! Rounds complete on ${gridLabel(grid.col,grid.row)}.`, 'urgent');
+      for (const e of state.enemies) {
+        if (dist(e, grid) <= 1 && e.alive) {
+          e.strength -= Math.floor(Math.random() * 5) + 3;
+          if (e.strength <= 0) { e.alive = false; e.revealed = true; }
+          else e.revealed = true;
+        }
+      }
+      // Friendly fire check
+      for (const key of ['ALPHA','BRAVO']) {
+        const s = state.squads[key];
+        if (dist(s, grid) <= 1) {
+          const cas = Math.floor(Math.random() * 3) + 1;
+          s.strength -= cas;
+          s.morale = Math.max(1, s.morale - 2);
+          state.totalCasualties += cas;
+          addRadio(key, `FRIENDLY FIRE! We're getting hit by our own arty! ${cas} men down!`, 'urgent');
+        }
+      }
+      // VIPER check
+      if (state.viperFound && dist(state.viperGrid, grid) <= 0) {
+        state.viperSurvivors = Math.max(0, state.viperSurvivors - 2);
+        addRadio('SYSTEM', 'WARNING: Fire mission impacted near VIPER position.', 'urgent');
+      }
+      renderMap();
+    });
+    advanceTime();
+    return;
+  }
+
+  // AIR STRIKE [GRID]
+  if (parts[0] === 'AIR' && parts[1] === 'STRIKE') {
+    const grid = parseGrid(parts[2] || '');
+    if (!grid) { addRadio('SYSTEM', 'Invalid grid. Usage: AIR STRIKE [GRID]', 'event'); advanceTime(); return; }
+    if (state.airStrikesLeft <= 0) { addRadio('SYSTEM', 'No air strikes remaining.', 'event'); advanceTime(); return; }
+    state.airStrikesLeft--;
+    addRadio('FALCON', `Copy, rolling in on ${gridLabel(grid.col,grid.row)}. Bombs away in 3 mikes.`, 'normal');
+    scheduleEvent(3, () => {
+      addRadio('FALCON', `Good hit on ${gridLabel(grid.col,grid.row)}. Falcon is RTB.`, 'urgent');
+      for (const e of state.enemies) {
+        if (dist(e, grid) <= 1 && e.alive) {
+          e.strength -= Math.floor(Math.random() * 6) + 4;
+          if (e.strength <= 0) { e.alive = false; }
+          e.revealed = true;
+        }
+      }
+      for (const key of ['ALPHA','BRAVO']) {
+        const s = state.squads[key];
+        if (dist(s, grid) <= 1) {
+          const cas = Math.floor(Math.random() * 4) + 1;
+          s.strength -= cas;
+          s.morale = Math.max(1, s.morale - 2);
+          state.totalCasualties += cas;
+          addRadio(key, `We're danger close to that strike! ${cas} casualties!`, 'urgent');
+        }
+      }
+      renderMap();
+    });
+    advanceTime();
+    return;
+  }
+
+  // MEDEVAC [UNIT]
+  if (parts[0] === 'MEDEVAC') {
+    if (!state.viperFound) {
+      addRadio('DUSTOFF', 'Need a grid for extraction. VIPER not yet located.', 'normal');
+      advanceTime();
+      return;
+    }
+    if (state.squads.DUSTOFF.status !== 'standby') {
+      addRadio('DUSTOFF', 'DUSTOFF already deployed.', 'normal');
+      advanceTime();
+      return;
+    }
+    const targetGrid = state.viperGrid;
+    state.squads.DUSTOFF.status = 'inbound';
+    state.squads.DUSTOFF.col = targetGrid.col;
+    state.squads.DUSTOFF.row = targetGrid.row;
+    state.dustoffLaunched = true;
+    state.dustoffArrivalTime = state.gameTime + 4;
+    addRadio('DUSTOFF', `Copy, DUSTOFF is wheels up. Inbound to ${gridLabel(targetGrid.col, targetGrid.row)}. ETA 4 mikes.`, 'normal');
+    scheduleEvent(4, () => {
+      // Check if enemies nearby
+      let hot = false;
+      for (const e of state.enemies) {
+        if (e.alive && dist(e, targetGrid) <= 2) hot = true;
+      }
+      if (hot) {
+        state.squads.DUSTOFF.status = 'onsite';
+        addRadio('DUSTOFF', `LZ is HOT! We're taking fire! We need suppression or we cannot land!`, 'urgent');
+        // Give them a window
+        scheduleEvent(3, () => {
+          let stillHot = false;
+          for (const e of state.enemies) {
+            if (e.alive && dist(e, targetGrid) <= 2) stillHot = true;
+          }
+          if (stillHot) {
+            addRadio('DUSTOFF', 'LZ still hot, we are aborting. DUSTOFF RTB.', 'urgent');
+            state.squads.DUSTOFF.status = 'standby';
+            state.squads.DUSTOFF.col = -1;
+            state.squads.DUSTOFF.row = -1;
+          } else {
+            performExtraction();
+          }
+        });
+      } else {
+        state.squads.DUSTOFF.status = 'onsite';
+        addRadio('DUSTOFF', `LZ is cold. Touching down now.`, 'normal');
+        scheduleEvent(2, () => performExtraction());
+      }
+      renderMap();
+    });
+    advanceTime();
+    return;
+  }
+
+  // RESUPPLY [UNIT]
+  if (parts[0] === 'RESUPPLY') {
+    const squad = state.squads[parts[1]];
+    if (!squad || parts[1] === 'DUSTOFF') { addRadio('SYSTEM', 'Invalid unit.', 'event'); advanceTime(); return; }
+    addRadio('SYSTEM', `Resupply inbound to ${parts[1]}. ETA 3 mikes.`, 'event');
+    scheduleEvent(3, () => {
+      squad.ammo = Math.min(5, squad.ammo + 3);
+      squad.stamina = Math.min(5, squad.stamina + 1);
+      addRadio(parts[1], 'Resupply received. Ammo restocked.', 'normal');
+    });
+    advanceTime();
+    return;
+  }
+
+  // Squad commands
+  const squadName = parts[0];
+  const squad = state.squads[squadName];
+  if (!squad || squadName === 'DUSTOFF') {
+    addRadio('SYSTEM', `Unknown callsign "${squadName}". Available: ALPHA, BRAVO`, 'event');
+    advanceTime();
+    return;
+  }
+  if (squad.strength <= 0) {
+    addRadio('SYSTEM', `${squadName} is combat ineffective.`, 'event');
+    advanceTime();
+    return;
+  }
+
+  const cmd = parts[1];
+
+  if (cmd === 'MOVE') {
+    const grid = parseGrid(parts[2] || '');
+    if (!grid) { addRadio('SYSTEM', 'Invalid grid. Usage: [UNIT] MOVE [GRID]', 'event'); advanceTime(); return; }
+    squad.targetCol = grid.col;
+    squad.targetRow = grid.row;
+    squad.moving = true;
+    squad.status = 'moving';
+    const moveDist = dist(squad, grid);
+    const eta = Math.max(1, moveDist);
+    const response = squad.personality === 'nervous'
+      ? `Copy that... moving to ${gridLabel(grid.col,grid.row)}. Hope it's quiet out there.`
+      : `Roger, moving to ${gridLabel(grid.col,grid.row)}. ETA ${eta} mikes.`;
+    addRadio(squadName, response, 'normal');
+    advanceTime();
+    return;
+  }
+
+  if (cmd === 'HOLD') {
+    squad.moving = false;
+    squad.targetCol = null;
+    squad.targetRow = null;
+    squad.status = 'idle';
+    const response = squad.personality === 'nervous'
+      ? `Holding position at ${gridLabel(squad.col,squad.row)}. Keeping our heads down.`
+      : `Copy, holding at ${gridLabel(squad.col,squad.row)}.`;
+    addRadio(squadName, response, 'normal');
+    advanceTime();
+    return;
+  }
+
+  if (cmd === 'RETREAT') {
+    squad.moving = false;
+    squad.status = 'idle';
+    // Move back one step toward B column
+    if (squad.col > 0) squad.col--;
+    squad.morale = Math.max(1, squad.morale - 1);
+    addRadio(squadName, `Falling back to ${gridLabel(squad.col,squad.row)}.`, 'normal');
+    renderMap();
+    advanceTime();
+    return;
+  }
+
+  if (cmd === 'ENGAGE') {
+    let nearest = null;
+    let minD = 999;
+    for (const e of state.enemies) {
+      if (e.alive && e.revealed) {
+        const d = dist(squad, e);
+        if (d < minD) { minD = d; nearest = e; }
+      }
+    }
+    if (!nearest || minD > 3) {
+      addRadio(squadName, 'No confirmed enemy contacts in range.', 'normal');
+      advanceTime();
+      return;
+    }
+    squad.status = 'engaged';
+    squad.ammo = Math.max(0, squad.ammo - 1);
+    squad.stamina = Math.max(0, squad.stamina - 1);
+    addRadio(squadName, `Engaging enemy at ${gridLabel(nearest.col,nearest.row)}!`, 'urgent');
+    // Resolve combat
+    scheduleEvent(1, () => resolveCombat(squad, nearest));
+    advanceTime();
+    return;
+  }
+
+  if (cmd === 'AMBUSH') {
+    squad.status = 'ambush';
+    squad.moving = false;
+    addRadio(squadName, `Setting up ambush at ${gridLabel(squad.col,squad.row)}. We're ready.`, 'normal');
+    advanceTime();
+    return;
+  }
+
+  if (cmd === 'SITREP') {
+    let report = `${squad.leader} here. Position ${gridLabel(squad.col,squad.row)}. `;
+    report += `${squad.strength} effectives. `;
+    if (squad.ammo <= 1) report += 'Running LOW on ammo. ';
+    if (squad.stamina <= 1) report += 'Men are exhausted. ';
+    if (squad.morale <= 2) report += 'Morale is shaky. ';
+    // Check nearby enemies
+    let nearbyEnemy = false;
+    for (const e of state.enemies) {
+      if (e.alive && dist(squad, e) <= 2) nearbyEnemy = true;
+    }
+    if (nearbyEnemy) report += 'We can hear movement nearby.';
+    else report += 'Area seems quiet for now.';
+
+    if (squad.morale <= 2) {
+      addGarbled(squadName, report);
+    } else {
+      addRadio(squadName, report, 'normal');
+    }
+    advanceTime();
+    return;
+  }
+
+  if (cmd === 'REGROUP') {
+    const other = state.squads[parts[2]];
+    if (!other || parts[2] === 'DUSTOFF') { addRadio('SYSTEM', 'Invalid regroup target.', 'event'); advanceTime(); return; }
+    squad.targetCol = other.col;
+    squad.targetRow = other.row;
+    squad.moving = true;
+    squad.status = 'moving';
+    addRadio(squadName, `Moving to regroup with ${parts[2]} at ${gridLabel(other.col,other.row)}.`, 'normal');
+    advanceTime();
+    return;
+  }
+
+  addRadio('SYSTEM', `Unknown command "${cmd}". Type HELP for commands.`, 'event');
+  advanceTime();
+}
+
+// ─── COMBAT ───────────────────────────────────────────
+function resolveCombat(squad, enemy) {
+  if (!enemy.alive || squad.strength <= 0) return;
+
+  const squadPower = squad.strength * (squad.morale / 5) * (squad.ammo > 0 ? 1 : 0.2);
+  const enemyPower = enemy.strength * 0.8;
+  const roll = Math.random() * (squadPower + enemyPower);
+
+  if (roll < squadPower) {
+    // We win this exchange
+    const eDamage = Math.floor(Math.random() * 4) + 2;
+    enemy.strength -= eDamage;
+    const sCas = Math.floor(Math.random() * 2);
+    squad.strength -= sCas;
+    state.totalCasualties += sCas;
+
+    if (enemy.strength <= 0) {
+      enemy.alive = false;
+      addRadio(squad.name, `Enemy neutralized! ${sCas > 0 ? sCas + ' casualties on our side.' : 'No casualties.'}`, 'urgent');
+      squad.status = 'idle';
+      squad.morale = Math.min(5, squad.morale + 1);
+    } else {
+      addRadio(squad.name, `We're hitting them hard. They're pulling back but still fighting. ${sCas > 0 ? 'We took ' + sCas + ' hit' + (sCas>1?'s':'') + '.' : ''}`, 'urgent');
+      // Continue
+      scheduleEvent(1, () => resolveCombat(squad, enemy));
+    }
+  } else {
+    // We take hits
+    const sCas = Math.floor(Math.random() * 3) + 1;
+    squad.strength -= sCas;
+    squad.morale = Math.max(0, squad.morale - 1);
+    state.totalCasualties += sCas;
+
+    if (squad.strength <= 0) {
+      addRadio(squad.name, `We're overrun! ${squad.leader}... *static*`, 'garbled');
+      squad.status = 'destroyed';
+      checkGameOver();
+    } else if (squad.morale <= 1) {
+      addRadio(squad.name, `${sCas} down! We can't hold this! Breaking contact!`, 'urgent');
+      squad.status = 'idle';
+      if (squad.col > 0) squad.col--;
+    } else {
+      const nervous = squad.personality === 'nervous';
+      addRadio(squad.name, `${sCas} casualties! ${nervous ? 'Oh God... they\'re everywhere!' : 'Still in the fight!'}`, 'urgent');
+      squad.ammo = Math.max(0, squad.ammo - 1);
+      scheduleEvent(1, () => resolveCombat(squad, enemy));
+    }
+  }
+  renderMap();
+  renderStatus();
+}
+
+function performExtraction() {
+  state.squads.DUSTOFF.status = 'extracting';
+  addRadio('DUSTOFF', `Loading ${state.viperSurvivors} VIPER survivors now...`, 'normal');
+  scheduleEvent(2, () => {
+    state.squads.DUSTOFF.status = 'rtb';
+    state.extractionDone = true;
+    addRadio('DUSTOFF', `We've got them. ${state.viperSurvivors} survivors aboard. DUSTOFF is RTB.`, 'urgent');
+    state.squads.DUSTOFF.col = -1;
+    state.squads.DUSTOFF.row = -1;
+    scheduleEvent(3, () => {
+      addRadio('DUSTOFF', 'DUSTOFF is back at base. Survivors are in triage.', 'normal');
+      state.squads.DUSTOFF.status = 'standby';
+      checkWin();
+    });
+    renderMap();
+  });
+}
+
+// ─── EVENT SYSTEM ─────────────────────────────────────
+function scheduleEvent(delayMins, fn) {
+  state.eventQueue.push({ time: state.gameTime + delayMins, fn });
+}
+
+function processEvents() {
+  const toFire = state.eventQueue.filter(e => state.gameTime >= e.time);
+  state.eventQueue = state.eventQueue.filter(e => state.gameTime < e.time);
+  for (const e of toFire) e.fn();
+}
+
+function setupMissionEvents() {
+  // Early radio chatter
+  scheduleEvent(1, () => {
+    addRadio('ALPHA', `${state.squads.ALPHA.leader} here. Alpha is ready to move. Awaiting orders.`, 'normal');
+  });
+  scheduleEvent(2, () => {
+    addRadio('BRAVO', `Bravo in position. ${state.squads.BRAVO.leader} standing by. It's quiet... too quiet.`, 'normal');
+  });
+  // Gentle reminder for new players
+  scheduleEvent(4, () => {
+    if (!state.squads.ALPHA.moving && !state.squads.BRAVO.moving) {
+      addRadio('HQ', 'Papa Bear, both squads are stationary. You can send them toward VIPER\'s last position. Try: ALPHA MOVE D4', 'event');
+    }
+  });
+
+  // Discovery events based on position checks (handled in tick)
+  // At 06:08, base intel
+  scheduleEvent(8, () => {
+    if (!state.eventsFired.has('intel1')) {
+      state.eventsFired.add('intel1');
+      addRadio('HQ', 'Papa Bear, we have SIGINT suggesting enemy patrol activity near grids E-F, rows 3-6. Advise caution.', 'event');
+    }
+  });
+
+  // At 06:15, pressure
+  scheduleEvent(15, () => {
+    if (!state.viperFound) {
+      addRadio('HQ', 'Papa Bear, VIPER team has been missing for 18 hours. Time is critical. What is your status?', 'urgent');
+    }
+  });
+
+  // Time limit warning
+  scheduleEvent(17, () => {
+    addRadio('HQ', 'Papa Bear, you have approximately 3 minutes before we lose daylight. Wrap it up.', 'urgent');
+  });
+
+  // End mission at 20 min
+  scheduleEvent(20, () => {
+    endMission();
+  });
+}
+
+// ─── PROXIMITY EVENTS ─────────────────────────────────
+function checkProximityEvents() {
+  for (const key of ['ALPHA','BRAVO']) {
+    const s = state.squads[key];
+    if (s.strength <= 0) continue;
+
+    // Village discovery
+    const village = state.pois.find(p => p.label === 'village');
+    if (village && !village.revealed && dist(s, village) <= 1) {
+      village.revealed = true;
+      showChoice(
+        `${key}: We've found a village at ${gridLabel(village.col,village.row)}. Locals look scared. Do we question them about VIPER?`,
+        [
+          { label: 'QUESTION THEM', fn: () => {
+            addRadio(key, 'Talking to village elder now...', 'normal');
+            scheduleEvent(2, () => {
+              addRadio(key, `Elder says they saw American soldiers being dragged east toward ${gridLabel(state.viperGrid.col, state.viperGrid.row)} two days ago. Looked bad.`, 'normal');
+              state.pois.find(p => p.label === 'wreckage').revealed = true;
+              renderMap();
+            });
+          }},
+          { label: 'PASS THROUGH', fn: () => {
+            addRadio(key, 'Roger, moving past the village.', 'normal');
+          }},
+        ]
+      );
+    }
+
+    // VIPER discovery
+    if (!state.viperFound && dist(s, state.viperGrid) <= 1) {
+      state.viperFound = true;
+      addRadio(key, `CONTACT! We found them! VIPER team is here at ${gridLabel(state.viperGrid.col,state.viperGrid.row)}! ${state.viperSurvivors} survivors, badly wounded. They need DUSTOFF now!`, 'urgent');
+      // Enemy reacts
+      scheduleEvent(2, () => {
+        state.enemies[0].revealed = true;
+        addRadio(key, `Enemy contact! We've got hostiles moving in from ${gridLabel(state.enemies[0].col,state.enemies[0].row)}!`, 'urgent');
+        if (s.status === 'ambush') {
+          addRadio(key, `They walked right into our ambush! Opening fire!`, 'urgent');
+          state.enemies[0].strength -= 3;
+          s.ammo = Math.max(0, s.ammo - 1);
+        }
+        renderMap();
+      });
+      renderMap();
+    }
+
+    // Enemy proximity (not yet revealed)
+    for (const e of state.enemies) {
+      if (e.alive && !e.revealed && dist(s, e) <= 1) {
+        e.revealed = true;
+        if (s.status === 'ambush') {
+          addRadio(key, `Enemy patrol at ${gridLabel(e.col,e.row)}! They don't see us. We have the drop on them.`, 'urgent');
+        } else {
+          s.status = 'engaged';
+          addRadio(key, `CONTACT! Enemy at ${gridLabel(e.col,e.row)}! Taking fire!`, 'urgent');
+          scheduleEvent(1, () => resolveCombat(s, e));
+        }
+        renderMap();
+      }
+    }
+
+    // Wreckage POI
+    const wreckage = state.pois.find(p => p.label === 'wreckage');
+    if (wreckage && wreckage.revealed && !state.eventsFired.has('wreckage_'+key) && dist(s, wreckage) <= 0) {
+      state.eventsFired.add('wreckage_'+key);
+      addRadio(key, `Found some gear here... blood trails leading east. VIPER was here. They were ambushed.`, 'normal');
+    }
+  }
+}
+
+// ─── CHOICES ──────────────────────────────────────────
+function showChoice(prompt, options) {
+  state.choiceActive = true;
+  const overlay = document.getElementById('choice-overlay');
+  const promptEl = document.getElementById('choice-prompt');
+  const optionsEl = document.getElementById('choice-options');
+  overlay.classList.remove('hidden');
+  promptEl.textContent = prompt;
+  optionsEl.innerHTML = '';
+  for (const opt of options) {
+    const btn = document.createElement('button');
+    btn.textContent = opt.label;
+    btn.onclick = () => {
+      overlay.classList.add('hidden');
+      state.choiceActive = false;
+      opt.fn();
+    };
+    optionsEl.appendChild(btn);
+  }
+}
+
+// ─── GAME LOOP ────────────────────────────────────────
+function tick() {
+  if (!state.running || state.missionEnd) return;
+
+  state.gameTime++;
+  state.realTick++;
+
+  // Move squads
+  for (const key of ['ALPHA','BRAVO']) {
+    const s = state.squads[key];
+    if (s.moving && s.targetCol !== null && s.strength > 0) {
+      // Move one step
+      if (s.col < s.targetCol) s.col++;
+      else if (s.col > s.targetCol) s.col--;
+      else if (s.row < s.targetRow) s.row++;
+      else if (s.row > s.targetRow) s.row--;
+
+      s.stamina = Math.max(0, s.stamina - 0.2);
+
+      // Check if arrived
+      if (s.col === s.targetCol && s.row === s.targetRow) {
+        s.moving = false;
+        s.targetCol = null;
+        s.targetRow = null;
+        s.status = 'idle';
+        addRadio(key, `In position at ${gridLabel(s.col,s.row)}.`, 'normal');
+      }
+
+      // Jungle terrain slows
+      if ((s.row === 2 && s.col >= 3 && s.col <= 5) || (s.row === 3 && s.col >= 4 && s.col <= 6)) {
+        s.stamina = Math.max(0, s.stamina - 0.3);
+        if (!state.eventsFired.has('jungle_' + key)) {
+          state.eventsFired.add('jungle_' + key);
+          addRadio(key, 'Pushing through dense jungle. Slow going.', 'normal');
+        }
+      }
+    }
+
+    // Stamina floor
+    if (s.stamina <= 0) s.stamina = 0;
+    if (s.stamina <= 1 && s.morale > 1 && !state.eventsFired.has('tired_'+key+'_'+state.realTick)) {
+      if (state.realTick % 8 === 0) {
+        state.eventsFired.add('tired_'+key+'_'+state.realTick);
+        addRadio(key, 'Men are exhausted, Commander. We need rest.', 'normal');
+        s.morale = Math.max(1, s.morale - 0.5);
+      }
+    }
+  }
+
+  processEvents();
+  checkProximityEvents();
+
+  renderClock();
+  renderMap();
+  renderStatus();
+}
+
+// ─── WIN/LOSE ─────────────────────────────────────────
+function checkGameOver() {
+  const a = state.squads.ALPHA;
+  const b = state.squads.BRAVO;
+  if (a.strength <= 0 && b.strength <= 0) {
+    endMission();
+  }
+}
+
+function checkWin() {
+  if (state.extractionDone && state.viperSurvivors >= 2) {
+    state.missionEnd = true;
+    setTimeout(() => {
+      const overlay = document.getElementById('gameover-overlay');
+      overlay.classList.remove('hidden');
+      document.getElementById('gameover-title').textContent = 'MISSION COMPLETE';
+      document.getElementById('gameover-text').textContent = `${state.viperSurvivors} VIPER survivors extracted successfully.`;
+      document.getElementById('gameover-stats').textContent = `Total casualties: ${state.totalCasualties}. ALPHA: ${state.squads.ALPHA.strength} remaining. BRAVO: ${state.squads.BRAVO.strength} remaining.`;
+    }, 2000);
+  }
+}
+
+function endMission() {
+  state.missionEnd = true;
+  state.running = false;
+  tts.stop();
+
+  const overlay = document.getElementById('gameover-overlay');
+  overlay.classList.remove('hidden');
+
+  if (state.extractionDone && state.viperSurvivors >= 2) {
+    document.getElementById('gameover-title').textContent = 'MISSION COMPLETE';
+    document.getElementById('gameover-text').textContent = `${state.viperSurvivors} VIPER survivors extracted. Well done, Commander.`;
+  } else if (state.squads.ALPHA.strength <= 0 && state.squads.BRAVO.strength <= 0) {
+    document.getElementById('gameover-title').textContent = 'MISSION FAILED';
+    document.getElementById('gameover-text').textContent = 'All units lost. There was no one left to send.';
+  } else if (!state.viperFound) {
+    document.getElementById('gameover-title').textContent = 'MISSION FAILED';
+    document.getElementById('gameover-text').textContent = 'VIPER team was never located. They are presumed KIA.';
+  } else {
+    document.getElementById('gameover-title').textContent = 'MISSION FAILED';
+    document.getElementById('gameover-text').textContent = 'VIPER team was found but extraction was not completed in time.';
+  }
+  document.getElementById('gameover-stats').textContent = `Total casualties: ${state.totalCasualties}.`;
+}
+
+// ─── INIT ─────────────────────────────────────────────
+function startGame() {
+  document.getElementById('briefing-overlay').classList.add('hidden');
+  document.getElementById('cmd').disabled = false;
+  document.getElementById('cmd').focus();
+
+  initSquads();
+  initMap();
+  setupMissionEvents();
+
+  state.running = true;
+
+  addRadio('SYSTEM', '═══ OPERATION BRIGHT LIGHT ═══', 'event');
+  addRadio('SYSTEM', 'Radio channel open. You are PAPA BEAR. Issue commands to your units.', 'event');
+  addRadio('SYSTEM', 'Type HELP for available commands. Game advances when you issue commands.', 'event');
+
+  renderClock();
+  renderMap();
+  renderStatus();
+}
+
+// Command input
+document.getElementById('cmd').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    const input = e.target.value;
+    e.target.value = '';
+    if (input.trim()) processCommand(input);
+  }
+});
+
+// TTS toggle
+function toggleTTS() {
+  const on = tts.toggle();
+  document.getElementById('tts-toggle').textContent = 'VOICE: ' + (on ? 'ON' : 'OFF');
+  document.getElementById('tts-toggle').style.color = on ? 'var(--dim)' : 'var(--border)';
+}
+
+// Focus input on click anywhere
+document.addEventListener('click', () => {
+  if (!document.getElementById('cmd').disabled) {
+    document.getElementById('cmd').focus();
+  }
+});
+
+// Expose game internals for testing
+window.__game = {
+  state,
+  tts,
+  processCommand,
+  startGame,
+  initSquads,
+  initMap,
+  setupMissionEvents,
+  tick,
+  resolveCombat,
+  performExtraction,
+  endMission,
+  checkGameOver,
+  checkWin,
+  addRadio,
+  addGarbled,
+  renderMap,
+  renderStatus,
+  renderClock,
+  gridLabel,
+  parseGrid,
+  dist,
+  showChoice,
+  scheduleEvent,
+  processEvents,
+  checkProximityEvents,
+  formatTime,
+  toggleTTS,
+};
+</script>
+</body>
+</html>
