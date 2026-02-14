@@ -408,7 +408,7 @@ button:focus-visible { outline: 2px solid var(--highlight); outline-offset: 2px;
 <div id="game" role="main">
   <div id="header">
     <h1>Signal Lost</h1>
-    <div><span id="op-name">Operation Bright Light</span> &nbsp;│&nbsp; <span class="time" id="clock">06:00</span> &nbsp;│&nbsp; <button id="pause-play" onclick="togglePause()" aria-label="Pause game" style="cursor:pointer;font-size:12px;letter-spacing:1px;background:none;border:1px solid var(--border);font-family:inherit;color:var(--glow);padding:2px 8px">PAUSE</button> &nbsp;│&nbsp; <button id="tts-toggle" onclick="toggleTTS()" aria-pressed="true" style="cursor:pointer;font-size:12px;letter-spacing:1px;background:none;border:none;font-family:inherit;color:var(--dim)">VOICE: ON</button></div>
+    <div><span id="op-name">Operation Bright Light</span> &nbsp;│&nbsp; <span class="time" id="clock">06:00</span> &nbsp;│&nbsp; <span class="clock-controls" aria-label="In-game clock speed"><button type="button" id="clock-pause" onclick="setClockSpeed('pause')" style="cursor:pointer;font-size:11px;letter-spacing:1px;background:none;border:1px solid var(--border);font-family:inherit;color:var(--dim);padding:2px 6px">PAUSE</button> <button type="button" id="clock-1x" onclick="setClockSpeed('1x')" style="cursor:pointer;font-size:11px;letter-spacing:1px;background:none;border:1px solid var(--border);font-family:inherit;color:var(--glow);padding:2px 6px">1×</button> <button type="button" id="clock-2x" onclick="setClockSpeed('2x')" style="cursor:pointer;font-size:11px;letter-spacing:1px;background:none;border:1px solid var(--border);font-family:inherit;color:var(--dim);padding:2px 6px">2×</button></span> &nbsp;│&nbsp; <button id="tts-toggle" onclick="toggleTTS()" aria-pressed="true" style="cursor:pointer;font-size:12px;letter-spacing:1px;background:none;border:none;font-family:inherit;color:var(--dim)">VOICE: ON</button></div>
   </div>
 
   <div id="main">
@@ -576,7 +576,8 @@ const state = {
   gameTime: 360, // 06:00 in minutes
   realTick: 0,
   tickIntervalId: null,
-  tickSpeed: 1000, // 1 real second = 1 game minute
+  clockSpeed: '1x', // 'pause' | '1x' | '2x'
+  tickSpeed: 15000, // ms per game min: 1x=15s (≥5 real min to time limit), 2x=7.5s
   eventQueue: [],
   eventsFired: new Set(),
   squads: {},
@@ -825,9 +826,12 @@ function getEnemyGridsNear(pos, range) {
   return [...labels].sort();
 }
 
-// ─── PAUSE / PLAY ──────────────────────────────────────
+// ─── IN-GAME CLOCK (wall clock vs game clock) ──────────
+const CLOCK_SPEEDS = { pause: 0, '1x': 15000, '2x': 7500 }; // ms per game minute; 0 = paused
+
 function startTickInterval() {
-  if (state.tickIntervalId) return;
+  stopTickInterval();
+  if (!state.tickSpeed || state.tickSpeed <= 0) return;
   state.tickIntervalId = setInterval(() => {
     if (state.running && !state.missionEnd && !state.paused) tick();
   }, state.tickSpeed);
@@ -840,19 +844,23 @@ function stopTickInterval() {
   }
 }
 
+function setClockSpeed(speed) {
+  if (!state.running || state.missionEnd) return;
+  state.clockSpeed = speed;
+  state.paused = speed === 'pause';
+  state.tickSpeed = CLOCK_SPEEDS[speed] || CLOCK_SPEEDS['1x'];
+  if (state.paused) stopTickInterval();
+  else startTickInterval();
+  const dim = 'var(--dim)', glow = 'var(--glow)';
+  document.getElementById('clock-pause').style.color = speed === 'pause' ? glow : dim;
+  document.getElementById('clock-1x').style.color = speed === '1x' ? glow : dim;
+  document.getElementById('clock-2x').style.color = speed === '2x' ? glow : dim;
+}
+
 function togglePause() {
   if (!state.running || state.missionEnd) return;
-  state.paused = !state.paused;
-  const btn = document.getElementById('pause-play');
-  if (state.paused) {
-    stopTickInterval();
-    btn.textContent = 'PLAY';
-    btn.setAttribute('aria-label', 'Resume game');
-  } else {
-    startTickInterval();
-    btn.textContent = 'PAUSE';
-    btn.setAttribute('aria-label', 'Pause game');
-  }
+  if (state.paused) setClockSpeed('1x');
+  else setClockSpeed('pause');
 }
 
 // ─── COMMAND PARSER ───────────────────────────────────
@@ -1581,14 +1589,14 @@ function startGame() {
   setupMissionEvents();
 
   state.running = true;
-  state.paused = true; // clock runs when player clicks PLAY
-  const ppBtn = document.getElementById('pause-play');
-  ppBtn.textContent = 'PLAY';
-  ppBtn.setAttribute('aria-label', 'Resume game');
+  state.paused = true;
+  state.clockSpeed = 'pause';
+  state.tickSpeed = CLOCK_SPEEDS['1x'];
+  setClockSpeed('pause'); // update button highlights
 
   addRadio('SYSTEM', '═══ OPERATION BRIGHT LIGHT ═══', 'event');
   addRadio('SYSTEM', 'Radio channel open. You are PAPA BEAR. Issue commands to your units.', 'event');
-  addRadio('SYSTEM', 'Type HELP for commands. Click PLAY to run the clock (1 sec = 1 min).', 'event');
+  addRadio('SYSTEM', 'Clock: PAUSE / 1× (15 sec = 1 game min) / 2×. At 1× you have at least 5 real minutes before the time limit.', 'event');
 
   renderClock();
   renderMap();
@@ -1685,7 +1693,9 @@ window.__game = {
   startGame,
   startTickInterval,
   stopTickInterval,
+  setClockSpeed,
   togglePause,
+  CLOCK_SPEEDS,
   initSquads,
   initMap,
   setupMissionEvents,
