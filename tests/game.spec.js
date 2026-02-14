@@ -208,9 +208,9 @@ test.describe('Squad Movement', () => {
     await page.goto('/signal-lost.html');
     await startMission(page);
     await sendCommand(page, 'ALPHA MOVE H1');
-    // sendCommand triggers one tick (via advanceTime), so ALPHA has already moved one step
     const colAfterCommand = await page.evaluate(() => window.__game.state.squads.ALPHA.col);
-    await advanceTicks(page, 1);
+    // Terrain: 2 ticks delay then move (first step on 3rd tick)
+    await advanceTicks(page, 3);
     const newCol = await page.evaluate(() => window.__game.state.squads.ALPHA.col);
     expect(newCol).toBe(colAfterCommand + 1);
   });

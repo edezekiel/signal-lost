@@ -408,7 +408,7 @@ button:focus-visible { outline: 2px solid var(--highlight); outline-offset: 2px;
 <div id="game" role="main">
   <div id="header">
     <h1>Signal Lost</h1>
-    <div><span id="op-name">Operation Bright Light</span> &nbsp;│&nbsp; <span class="time" id="clock">06:00</span> &nbsp;│&nbsp; <button id="tts-toggle" onclick="toggleTTS()" aria-pressed="true" style="cursor:pointer;font-size:12px;letter-spacing:1px;background:none;border:none;font-family:inherit;color:var(--dim)">VOICE: ON</button></div>
+    <div><span id="op-name">Operation Bright Light</span> &nbsp;│&nbsp; <span class="time" id="clock">06:00</span> &nbsp;│&nbsp; <button id="pause-play" onclick="togglePause()" aria-label="Pause game" style="cursor:pointer;font-size:12px;letter-spacing:1px;background:none;border:1px solid var(--border);font-family:inherit;color:var(--glow);padding:2px 8px">PAUSE</button> &nbsp;│&nbsp; <button id="tts-toggle" onclick="toggleTTS()" aria-pressed="true" style="cursor:pointer;font-size:12px;letter-spacing:1px;background:none;border:none;font-family:inherit;color:var(--dim)">VOICE: ON</button></div>
   </div>
 
   <div id="main">
@@ -572,15 +572,18 @@ const COL_LABELS = 'ABCDEFGH';
 
 const state = {
   running: false,
+  paused: false,
   gameTime: 360, // 06:00 in minutes
   realTick: 0,
-  tickSpeed: 1500, // ms per game minute
+  tickIntervalId: null,
+  tickSpeed: 1000, // 1 real second = 1 game minute
   eventQueue: [],
   eventsFired: new Set(),
   squads: {},
   enemies: [],
   pois: [],
   viperFound: false,
+  viperFoundBy: null, // ALPHA or BRAVO - that squad guards until medevac
   viperGrid: null,
   viperSurvivors: 0,
   dustoffLaunched: false,
@@ -607,6 +610,8 @@ function initSquads() {
       col: 1, row: 1, // B2
       targetCol: null, targetRow: null,
       moving: false,
+      moveTicksLeft: 0, // ticks until next grid step (terrain-dependent)
+      pendingAmbush: false, // set up ambush on arrival
       morale: 5, ammo: 5, stamina: 5, strength: 12,
       status: 'idle', // idle, moving, engaged, pinned, ambush
       holdingFire: false,
@@ -618,6 +623,8 @@ function initSquads() {
       col: 1, row: 5, // B6
       targetCol: null, targetRow: null,
       moving: false,
+      moveTicksLeft: 0,
+      pendingAmbush: false,
       morale: 5, ammo: 5, stamina: 5, strength: 10,
       status: 'idle',
       holdingFire: false,
@@ -805,6 +812,49 @@ function dist(a, b) {
   return Math.abs(a.col - b.col) + Math.abs(a.row - b.row);
 }
 
+function isJungle(col, row) {
+  return (row === 2 && col >= 3 && col <= 5) || (row === 3 && col >= 4 && col <= 6);
+}
+
+/** Returns list of unique grid labels where alive enemies are within range of pos (for reporting incoming fire) */
+function getEnemyGridsNear(pos, range) {
+  const labels = new Set();
+  for (const e of state.enemies) {
+    if (e.alive && dist(e, pos) <= range) labels.add(gridLabel(e.col, e.row));
+  }
+  return [...labels].sort();
+}
+
+// ─── PAUSE / PLAY ──────────────────────────────────────
+function startTickInterval() {
+  if (state.tickIntervalId) return;
+  state.tickIntervalId = setInterval(() => {
+    if (state.running && !state.missionEnd && !state.paused) tick();
+  }, state.tickSpeed);
+}
+
+function stopTickInterval() {
+  if (state.tickIntervalId) {
+    clearInterval(state.tickIntervalId);
+    state.tickIntervalId = null;
+  }
+}
+
+function togglePause() {
+  if (!state.running || state.missionEnd) return;
+  state.paused = !state.paused;
+  const btn = document.getElementById('pause-play');
+  if (state.paused) {
+    stopTickInterval();
+    btn.textContent = 'PLAY';
+    btn.setAttribute('aria-label', 'Resume game');
+  } else {
+    startTickInterval();
+    btn.textContent = 'PAUSE';
+    btn.setAttribute('aria-label', 'Pause game');
+  }
+}
+
 // ─── COMMAND PARSER ───────────────────────────────────
 function processCommand(raw) {
   const input = raw.trim().toUpperCase();
@@ -812,16 +862,8 @@ function processCommand(raw) {
 
   addRadio('COMMAND', raw.trim(), 'normal');
 
-  // Helper to advance time
-  function advanceTime() {
-    if (state.running && !state.missionEnd) {
-      tick();
-    }
-  }
-
   if (state.choiceActive) {
     addRadio('SYSTEM', 'Respond to the current situation first.', 'event');
-    advanceTime();
     return;
   }
 
@@ -829,11 +871,10 @@ function processCommand(raw) {
 
   if (parts[0] === 'HELP') {
     addRadio('SYSTEM', '── Movement ──  [UNIT] MOVE [GRID] · [UNIT] HOLD · [UNIT] RETREAT', 'event');
-    addRadio('SYSTEM', '── Combat ────  [UNIT] ENGAGE · [UNIT] AMBUSH', 'event');
+    addRadio('SYSTEM', '── Combat ────  [UNIT] ENGAGE · [UNIT] AMBUSH [GRID] (move to grid, then set ambush; uses stamina)', 'event');
     addRadio('SYSTEM', '── Support ───  FIRE SUPPORT [GRID] · AIR STRIKE [GRID] · RESUPPLY [UNIT] · MEDEVAC', 'event');
     addRadio('SYSTEM', '── Info ──────  [UNIT] SITREP · STATUS · MAP · HELP', 'event');
     addRadio('SYSTEM', 'Units: ALPHA, BRAVO.  Grids: A1–H8.  Example: ALPHA MOVE E5', 'event');
-    advanceTime();
     return;
   }
 
@@ -843,22 +884,20 @@ function processCommand(raw) {
       addRadio('SYSTEM', `${key} (${s.leader}) — Grid ${gridLabel(s.col,s.row)} — Morale:${s.morale} Ammo:${s.ammo} Stamina:${s.stamina} Strength:${s.strength} — ${s.status}`, 'event');
     }
     addRadio('SYSTEM', `DUSTOFF — ${state.squads.DUSTOFF.status.toUpperCase()}`, 'event');
-    advanceTime();
     return;
   }
 
   if (parts[0] === 'MAP') {
     renderMap();
     addRadio('SYSTEM', 'Map refreshed.', 'event');
-    advanceTime();
     return;
   }
 
   // FIRE SUPPORT [GRID]
   if (parts[0] === 'FIRE' && parts[1] === 'SUPPORT') {
     const grid = parseGrid(parts[2] || '');
-    if (!grid) { addRadio('SYSTEM', 'Invalid grid. Usage: FIRE SUPPORT [GRID]', 'event'); advanceTime(); return; }
-    if (state.fireSupportsLeft <= 0) { addRadio('SYSTEM', 'No fire support missions remaining.', 'event'); advanceTime(); return; }
+    if (!grid) { addRadio('SYSTEM', 'Invalid grid. Usage: FIRE SUPPORT [GRID]', 'event');  return; }
+    if (state.fireSupportsLeft <= 0) { addRadio('SYSTEM', 'No fire support missions remaining.', 'event');  return; }
     state.fireSupportsLeft--;
     addRadio('ARTILLERY', `Fire mission received. Rounds out on ${gridLabel(grid.col,grid.row)}. Splash in 2 mikes.`, 'normal');
     scheduleEvent(2, () => {
@@ -891,15 +930,14 @@ function processCommand(raw) {
       }
       renderMap();
     });
-    advanceTime();
     return;
   }
 
   // AIR STRIKE [GRID]
   if (parts[0] === 'AIR' && parts[1] === 'STRIKE') {
     const grid = parseGrid(parts[2] || '');
-    if (!grid) { addRadio('SYSTEM', 'Invalid grid. Usage: AIR STRIKE [GRID]', 'event'); advanceTime(); return; }
-    if (state.airStrikesLeft <= 0) { addRadio('SYSTEM', 'No air strikes remaining.', 'event'); advanceTime(); return; }
+    if (!grid) { addRadio('SYSTEM', 'Invalid grid. Usage: AIR STRIKE [GRID]', 'event');  return; }
+    if (state.airStrikesLeft <= 0) { addRadio('SYSTEM', 'No air strikes remaining.', 'event');  return; }
     state.airStrikesLeft--;
     addRadio('FALCON', `Copy, rolling in on ${gridLabel(grid.col,grid.row)}. Bombs away in 3 mikes.`, 'normal');
     scheduleEvent(3, () => {
@@ -931,7 +969,6 @@ function processCommand(raw) {
       }
       renderMap();
     });
-    advanceTime();
     return;
   }
 
@@ -939,12 +976,10 @@ function processCommand(raw) {
   if (parts[0] === 'MEDEVAC') {
     if (!state.viperFound) {
       addRadio('DUSTOFF', 'Need a grid for extraction. VIPER not yet located.', 'normal');
-      advanceTime();
       return;
     }
     if (state.squads.DUSTOFF.status !== 'standby') {
       addRadio('DUSTOFF', 'DUSTOFF already deployed.', 'normal');
-      advanceTime();
       return;
     }
     const targetGrid = state.viperGrid;
@@ -962,7 +997,9 @@ function processCommand(raw) {
       }
       if (hot) {
         state.squads.DUSTOFF.status = 'onsite';
-        addRadio('DUSTOFF', `LZ is HOT! We're taking fire! We need suppression or we cannot land!`, 'urgent');
+        const fireGrids = getEnemyGridsNear(targetGrid, 2);
+        const gridList = fireGrids.length ? fireGrids.join(', ') : 'unknown';
+        addRadio('DUSTOFF', `LZ is HOT! We're taking fire from grid ${gridList}! Request suppression on those coordinates or we cannot land!`, 'urgent');
         // Give them a window
         scheduleEvent(3, () => {
           let stillHot = false;
@@ -970,7 +1007,8 @@ function processCommand(raw) {
             if (e.alive && dist(e, targetGrid) <= 2) stillHot = true;
           }
           if (stillHot) {
-            addRadio('DUSTOFF', 'LZ still hot, we are aborting. DUSTOFF RTB.', 'urgent');
+            const stillGrids = getEnemyGridsNear(targetGrid, 2);
+            addRadio('DUSTOFF', `LZ still hot from grid ${stillGrids.join(', ') || 'unknown'}. We are aborting. DUSTOFF RTB.`, 'urgent');
             state.squads.DUSTOFF.status = 'standby';
             state.squads.DUSTOFF.col = -1;
             state.squads.DUSTOFF.row = -1;
@@ -986,21 +1024,19 @@ function processCommand(raw) {
       }
       renderMap();
     });
-    advanceTime();
     return;
   }
 
   // RESUPPLY [UNIT]
   if (parts[0] === 'RESUPPLY') {
     const squad = state.squads[parts[1]];
-    if (!squad || parts[1] === 'DUSTOFF') { addRadio('SYSTEM', 'Invalid unit.', 'event'); advanceTime(); return; }
+    if (!squad || parts[1] === 'DUSTOFF') { addRadio('SYSTEM', 'Invalid unit.', 'event');  return; }
     addRadio('SYSTEM', `Resupply inbound to ${parts[1]}. ETA 3 mikes.`, 'event');
     scheduleEvent(3, () => {
       squad.ammo = Math.min(5, squad.ammo + 3);
       squad.stamina = Math.min(5, squad.stamina + 1);
       addRadio(parts[1], 'Resupply received. Ammo restocked.', 'normal');
     });
-    advanceTime();
     return;
   }
 
@@ -1009,32 +1045,31 @@ function processCommand(raw) {
   const squad = state.squads[squadName];
   if (!squad || squadName === 'DUSTOFF') {
     addRadio('SYSTEM', `Unknown callsign "${squadName}". Available: ALPHA, BRAVO`, 'event');
-    advanceTime();
     return;
   }
   if (squad.strength <= 0) {
     addRadio('SYSTEM', `${squadName} is combat ineffective.`, 'event');
-    advanceTime();
     return;
   }
 
   const cmd = parts[1];
 
   if (cmd === 'MOVE') {
-    if (squad.status === 'engaged') { addRadio('SYSTEM', `${squadName} cannot move while engaged in combat.`, 'event'); advanceTime(); return; }
+    if (squad.status === 'engaged') { addRadio('SYSTEM', `${squadName} cannot move while engaged in combat.`, 'event');  return; }
+    if (state.viperFoundBy === squadName) { addRadio(squadName, "We're with the survivors — we can't leave until DUSTOFF extracts them.", 'normal');  return; }
     const grid = parseGrid(parts[2] || '');
-    if (!grid) { addRadio('SYSTEM', 'Invalid grid. Usage: [UNIT] MOVE [GRID]', 'event'); advanceTime(); return; }
+    if (!grid) { addRadio('SYSTEM', 'Invalid grid. Usage: [UNIT] MOVE [GRID]', 'event');  return; }
     squad.targetCol = grid.col;
     squad.targetRow = grid.row;
     squad.moving = true;
     squad.status = 'moving';
+    squad.moveTicksLeft = 2; // first step after 2 minutes (terrain may add more per cell)
     const moveDist = dist(squad, grid);
-    const eta = Math.max(1, moveDist);
+    const eta = Math.max(2, moveDist * 2); // ~2 min per cell
     const response = squad.personality === 'nervous'
       ? `Copy that... moving to ${gridLabel(grid.col,grid.row)}. Hope it's quiet out there.`
       : `Roger, moving to ${gridLabel(grid.col,grid.row)}. ETA ${eta} mikes.`;
     addRadio(squadName, response, 'normal');
-    advanceTime();
     return;
   }
 
@@ -1047,14 +1082,13 @@ function processCommand(raw) {
       ? `Holding position at ${gridLabel(squad.col,squad.row)}. Keeping our heads down.`
       : `Copy, holding at ${gridLabel(squad.col,squad.row)}.`;
     addRadio(squadName, response, 'normal');
-    advanceTime();
     return;
   }
 
   if (cmd === 'RETREAT') {
+    if (state.viperFoundBy === squadName) { addRadio(squadName, "We're with the survivors — we can't leave until DUSTOFF extracts them.", 'normal');  return; }
     if (squad.col === 0) {
       addRadio('SYSTEM', `${squadName} cannot retreat further.`, 'event');
-      advanceTime();
       return;
     }
     squad.moving = false;
@@ -1063,7 +1097,6 @@ function processCommand(raw) {
     squad.morale = Math.max(1, squad.morale - 1);
     addRadio(squadName, `Falling back to ${gridLabel(squad.col,squad.row)}.`, 'normal');
     renderMap();
-    advanceTime();
     return;
   }
 
@@ -1078,7 +1111,6 @@ function processCommand(raw) {
     }
     if (!nearest || minD > 3) {
       addRadio(squadName, 'No confirmed enemy contacts in range.', 'normal');
-      advanceTime();
       return;
     }
     squad.status = 'engaged';
@@ -1087,15 +1119,37 @@ function processCommand(raw) {
     addRadio(squadName, `Engaging enemy at ${gridLabel(nearest.col,nearest.row)}!`, 'urgent');
     // Resolve combat
     scheduleEvent(1, () => resolveCombat(squad, nearest));
-    advanceTime();
     return;
   }
 
   if (cmd === 'AMBUSH') {
+    if (state.viperFoundBy === squadName) {
+      let underFire = false;
+      for (const e of state.enemies) {
+        if (e.alive && dist(squad, e) <= 2) { underFire = true; break; }
+      }
+      if (underFire) {
+        addRadio(squadName, "We're under fire defending the survivors — can't set up an ambush. Need that LZ cleared for DUSTOFF.", 'normal');
+        return;
+      }
+    }
+    const grid = parseGrid(parts[2] || '');
+    if (grid && (grid.col !== squad.col || grid.row !== squad.row)) {
+      if (state.viperFoundBy === squadName) { addRadio(squadName, "We're with the survivors — we can't leave to set up an ambush elsewhere.", 'normal');  return; }
+      squad.targetCol = grid.col;
+      squad.targetRow = grid.row;
+      squad.moving = true;
+      squad.status = 'moving';
+      squad.pendingAmbush = true;
+      squad.moveTicksLeft = 2;
+      addRadio(squadName, `Moving to ${gridLabel(grid.col,grid.row)} to set up ambush. We'll use stamina to dig in when we get there.`, 'normal');
+      return;
+    }
     squad.status = 'ambush';
     squad.moving = false;
-    addRadio(squadName, `Setting up ambush at ${gridLabel(squad.col,squad.row)}. We're ready.`, 'normal');
-    advanceTime();
+    squad.pendingAmbush = false;
+    squad.stamina = Math.max(0, squad.stamina - 1);
+    addRadio(squadName, `Setting up ambush at ${gridLabel(squad.col,squad.row)}. Stamina spent — we're ready.`, 'normal');
     return;
   }
 
@@ -1118,25 +1172,23 @@ function processCommand(raw) {
     } else {
       addRadio(squadName, report, 'normal');
     }
-    advanceTime();
     return;
   }
 
   if (cmd === 'REGROUP') {
-    if (parts[2] === squadName) { addRadio('SYSTEM', `${squadName} cannot regroup with itself.`, 'event'); advanceTime(); return; }
+    if (state.viperFoundBy === squadName) { addRadio(squadName, "We're with the survivors — we can't leave until DUSTOFF extracts them.", 'normal');  return; }
+    if (parts[2] === squadName) { addRadio('SYSTEM', `${squadName} cannot regroup with itself.`, 'event');  return; }
     const other = state.squads[parts[2]];
-    if (!other || parts[2] === 'DUSTOFF') { addRadio('SYSTEM', 'Invalid regroup target.', 'event'); advanceTime(); return; }
+    if (!other || parts[2] === 'DUSTOFF') { addRadio('SYSTEM', 'Invalid regroup target.', 'event');  return; }
     squad.targetCol = other.col;
     squad.targetRow = other.row;
     squad.moving = true;
     squad.status = 'moving';
     addRadio(squadName, `Moving to regroup with ${parts[2]} at ${gridLabel(other.col,other.row)}.`, 'normal');
-    advanceTime();
     return;
   }
 
   addRadio('SYSTEM', `Unknown command "${cmd}". Type HELP for commands.`, 'event');
-  advanceTime();
 }
 
 // ─── COMBAT ───────────────────────────────────────────
@@ -1173,18 +1225,19 @@ function resolveCombat(squad, enemy) {
     squad.strength = Math.max(0, squad.strength);
     squad.morale = Math.max(0, squad.morale - 1);
     state.totalCasualties += sCas;
+    const enemyGrid = gridLabel(enemy.col, enemy.row);
 
     if (squad.strength <= 0) {
-      addRadio(squad.name, `We're overrun! ${squad.leader}... *static*`, 'garbled');
+      addRadio(squad.name, `We're overrun! Taking fire from grid ${enemyGrid}! ${squad.leader}... *static*`, 'garbled');
       squad.status = 'destroyed';
       checkGameOver();
     } else if (squad.morale <= 1) {
-      addRadio(squad.name, `${sCas} down! We can't hold this! Breaking contact!`, 'urgent');
+      addRadio(squad.name, `${sCas} down! Incoming from grid ${enemyGrid}! We can't hold this! Breaking contact!`, 'urgent');
       squad.status = 'idle';
       if (squad.col > 0) squad.col--;
     } else {
       const nervous = squad.personality === 'nervous';
-      addRadio(squad.name, `${sCas} casualties! ${nervous ? 'Oh God... they\'re everywhere!' : 'Still in the fight!'}`, 'urgent');
+      addRadio(squad.name, `${sCas} casualties! Taking fire from grid ${enemyGrid}! ${nervous ? 'Oh God... they\'re everywhere!' : 'Still in the fight!'}`, 'urgent');
       squad.ammo = Math.max(0, squad.ammo - 1);
       scheduleEvent(1, () => resolveCombat(squad, enemy));
     }
@@ -1207,6 +1260,7 @@ function performExtraction() {
   scheduleEvent(2, () => {
     state.squads.DUSTOFF.status = 'rtb';
     state.extractionDone = true;
+    state.viperFoundBy = null; // guard squad is no longer pinned
     addRadio('DUSTOFF', `We've got them. ${state.viperSurvivors} survivors aboard. DUSTOFF is RTB.`, 'urgent');
     state.squads.DUSTOFF.col = -1;
     state.squads.DUSTOFF.row = -1;
@@ -1300,10 +1354,15 @@ function checkProximityEvents() {
       );
     }
 
-    // VIPER discovery
+    // VIPER discovery — survivors stay with this unit; unit guards until medevac
     if (!state.viperFound && dist(s, state.viperGrid) <= 1) {
       state.viperFound = true;
-      addRadio(key, `CONTACT! We found them! VIPER team is here at ${gridLabel(state.viperGrid.col,state.viperGrid.row)}! ${state.viperSurvivors} survivors, badly wounded. They need DUSTOFF now!`, 'urgent');
+      state.viperFoundBy = key;
+      s.moving = false;
+      s.targetCol = null;
+      s.targetRow = null;
+      // Keep current status (e.g. ambush) so they can still use it while guarding
+      addRadio(key, `CONTACT! We found them! VIPER team is here at ${gridLabel(state.viperGrid.col,state.viperGrid.row)}! ${state.viperSurvivors} survivors, badly wounded. We're staying with them until DUSTOFF. They need medevac now!`, 'urgent');
       // Enemy reacts
       scheduleEvent(2, () => {
         state.enemies[0].revealed = true;
@@ -1372,33 +1431,44 @@ function tick() {
   state.gameTime++;
   state.realTick++;
 
-  // Move squads
+  // Move squads (terrain: 2 min per cell open, 3 min in jungle)
   for (const key of ['ALPHA','BRAVO']) {
     const s = state.squads[key];
     if (s.moving && s.targetCol !== null && s.strength > 0) {
-      // Move one step
-      if (s.col < s.targetCol) s.col++;
-      else if (s.col > s.targetCol) s.col--;
-      else if (s.row < s.targetRow) s.row++;
-      else if (s.row > s.targetRow) s.row--;
+      if (s.moveTicksLeft > 0) {
+        s.moveTicksLeft--;
+      } else {
+        // Decide next cell; next step will wait 2 (open) or 3 (jungle) minutes
+        const nextCol = s.col < s.targetCol ? s.col + 1 : s.col > s.targetCol ? s.col - 1 : s.col;
+        const nextRow = s.row < s.targetRow ? s.row + 1 : s.row > s.targetRow ? s.row - 1 : s.row;
+        const inJungle = isJungle(nextCol, nextRow);
+        s.moveTicksLeft = inJungle ? 3 : 2; // minutes until next cell
 
-      s.stamina = Math.max(0, s.stamina - 0.2);
+        s.col = nextCol;
+        s.row = nextRow;
+        s.stamina = Math.max(0, s.stamina - 0.2);
+        if (inJungle) {
+          s.stamina = Math.max(0, s.stamina - 0.3);
+          if (!state.eventsFired.has('jungle_' + key)) {
+            state.eventsFired.add('jungle_' + key);
+            addRadio(key, 'Pushing through dense jungle. Slow going.', 'normal');
+          }
+        }
 
-      // Check if arrived
-      if (s.col === s.targetCol && s.row === s.targetRow) {
-        s.moving = false;
-        s.targetCol = null;
-        s.targetRow = null;
-        s.status = 'idle';
-        addRadio(key, `In position at ${gridLabel(s.col,s.row)}.`, 'normal');
-      }
-
-      // Jungle terrain slows
-      if ((s.row === 2 && s.col >= 3 && s.col <= 5) || (s.row === 3 && s.col >= 4 && s.col <= 6)) {
-        s.stamina = Math.max(0, s.stamina - 0.3);
-        if (!state.eventsFired.has('jungle_' + key)) {
-          state.eventsFired.add('jungle_' + key);
-          addRadio(key, 'Pushing through dense jungle. Slow going.', 'normal');
+        if (s.col === s.targetCol && s.row === s.targetRow) {
+          s.moving = false;
+          s.targetCol = null;
+          s.targetRow = null;
+          s.moveTicksLeft = 0;
+          if (s.pendingAmbush) {
+            s.pendingAmbush = false;
+            s.status = 'ambush';
+            s.stamina = Math.max(0, s.stamina - 1.5);
+            addRadio(key, `In position at ${gridLabel(s.col,s.row)}. Ambush set. We're ready.`, 'normal');
+          } else {
+            s.status = 'idle';
+            addRadio(key, `In position at ${gridLabel(s.col,s.row)}.`, 'normal');
+          }
         }
       }
     }
@@ -1476,6 +1546,7 @@ function endMission() {
   if (state.missionEnd) return;
   state.missionEnd = true;
   state.running = false;
+  stopTickInterval();
   tts.stop();
 
   const overlay = document.getElementById('gameover-overlay');
@@ -1510,10 +1581,14 @@ function startGame() {
   setupMissionEvents();
 
   state.running = true;
+  state.paused = true; // clock runs when player clicks PLAY
+  const ppBtn = document.getElementById('pause-play');
+  ppBtn.textContent = 'PLAY';
+  ppBtn.setAttribute('aria-label', 'Resume game');
 
   addRadio('SYSTEM', '═══ OPERATION BRIGHT LIGHT ═══', 'event');
   addRadio('SYSTEM', 'Radio channel open. You are PAPA BEAR. Issue commands to your units.', 'event');
-  addRadio('SYSTEM', 'Type HELP for available commands. Game advances when you issue commands.', 'event');
+  addRadio('SYSTEM', 'Type HELP for commands. Click PLAY to run the clock (1 sec = 1 min).', 'event');
 
   renderClock();
   renderMap();
@@ -1608,6 +1683,9 @@ window.__game = {
   tts,
   processCommand,
   startGame,
+  startTickInterval,
+  stopTickInterval,
+  togglePause,
   initSquads,
   initMap,
   setupMissionEvents,
